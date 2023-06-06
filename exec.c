@@ -4,6 +4,8 @@
 
 #include <errno.h>
 #include <signal.h>
+#include <termios.h>
+#include <unistd.h>
 
 #include "wait.h"
 
@@ -12,17 +14,17 @@
    builtin, calls a function, etc.)
 */
 
-extern void exec(List *s, bool parent) {
+extern void exec(const List *s, bool parent) {
 	char **av, **ev = NULL;
-	int stat;
 	pid_t pid;
 	builtin_t *b;
 	char *path = NULL;
 	bool didfork, returning, saw_exec, saw_builtin;
+	struct termios t;
 	av = list2array(s, dashex);
 	saw_builtin = saw_exec = FALSE;
 	do {
-		if (*av == NULL	|| isabsolute(*av))
+		if (*av == NULL || isabsolute(*av))
 			b = NULL;
 		else if (!saw_builtin && fnlookup(*av) != NULL)
 			b = funcall;
@@ -68,6 +70,8 @@ extern void exec(List *s, bool parent) {
 	   must fork no matter what.
 	 */
 	if ((parent && (b == NULL || redirq != NULL)) || outstanding_cmdarg()) {
+		if (interactive)
+			tcgetattr(0, &t);
 		pid = rc_fork();
 		didfork = TRUE;
 	} else {
@@ -80,6 +84,7 @@ extern void exec(List *s, bool parent) {
 		uerror("fork");
 		rc_error(NULL);
 		/* NOTREACHED */
+		/* FALLTHRU */
 	case 0:
 		if (!returning)
 			setsigdefaults(FALSE);
@@ -107,9 +112,13 @@ extern void exec(List *s, bool parent) {
 		uerror(*av);
 		rc_exit(1);
 		/* NOTREACHED */
-	default:
+		/* FALLTHRU */
+	default: {
+		int stat;
 		redirq = NULL;
 		rc_wait4(pid, &stat, TRUE);
+		if (interactive && WIFSIGNALED(stat))
+			tcsetattr(0, TCSANOW, &t);
 		setstatus(-1, stat);
 		/*
 		   There is a very good reason for having this weird
@@ -127,5 +136,6 @@ extern void exec(List *s, bool parent) {
 		sigchk();
 		nl_on_intr = TRUE;
 		pop_cmdarg(TRUE);
+	  }
 	}
 }

@@ -47,7 +47,7 @@ static int ingidset(gid_t g) {
    Returns a bool instead of this -1 nonsense.
 */
 
-bool rc_access(char *path, bool verbose, struct stat *stp) {
+bool rc_access(const char *path, bool verbose, struct stat *stp) {
 	int mask;
 	if (stat(path, stp) != 0) {
 		if (verbose) /* verbose flag only set for absolute pathname */
@@ -72,9 +72,9 @@ bool rc_access(char *path, bool verbose, struct stat *stp) {
 
 /* replace non-printing characters with question marks in a freshly
  * allocated string */
-static char *protect(char *in) {
-	int l = strlen(in);
-	char *out = ealloc(l + 1);
+static char *protect(const char *in) {
+	const int l = strlen(in);
+	char *out = enew_arr(char, l + 1);
 	int i;
 
 	for (i = 0; i < l; ++i)
@@ -107,9 +107,11 @@ extern char *which(char *name, bool verbose) {
 #else
 		ngroups = NGROUPS;
 #endif
-		if (ngroups) {	
-			gidset = ealloc(ngroups * sizeof(GETGROUPS_T));
-			getgroups(ngroups, gidset);
+		if (ngroups) {
+			int ignore;
+			gidset = enew_arr(GETGROUPS_T, ngroups);
+			ignore = getgroups(ngroups, gidset);
+			(void) ignore;
 		}
 #endif
 	}
@@ -117,10 +119,10 @@ extern char *which(char *name, bool verbose) {
 		return rc_access(name, verbose, &st) ? name : NULL;
 	len = strlen(name);
 	for (path = varlookup("path"); path != NULL; path = path->n) {
-		size_t need = strlen(path->w) + len + 2; /* one for null terminator, one for the '/' */
+		const size_t need = strlen(path->w) + len + 2; /* one for null terminator, one for the '/' */
 		if (testlen < need) {
 			efree(test);
-			test = ealloc(testlen = need);
+			test = enew_arr(char, testlen = need);
 		}
 		if (*path->w == '\0') {
 			strcpy(test, name);

@@ -21,11 +21,7 @@
 
 #if RC_ADDON
 
-#define ADDONS \
-	{ b_sum,	"+" }, \
-	{ b_prod, "x" },
-
-extern void b_sum(char **av);
-extern void b_prod(char **av);
+extern void b_kill(char **av);
+extern void b_calc(char **av);
 
 #endif

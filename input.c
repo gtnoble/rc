@@ -42,7 +42,7 @@ extern void ugchar(int c) {
 	istack->ungetbuf[istack->ungetcount++] = c;
 }
 
-extern int gchar() {
+extern int gchar(void) {
 	int c;
 
 	if (istack->ungetcount)
@@ -57,14 +57,14 @@ extern int gchar() {
 
 /* get the next character from a string. */
 
-static int stringgchar() {
+static int stringgchar(void) {
 	return lastchar = (inbuf[chars_out] == '\0' ? EOF : inbuf[chars_out++]);
 }
 
 
 /* write last command out to a file if interactive && $history is set */
 
-static void history() {
+static void history(void) {
 	List *hist;
 	size_t a;
 
@@ -80,8 +80,8 @@ static void history() {
 
 		/* line matches [ \t]*[^#\n] so it's ok to write out */
 		if (c != ' ' && c != '\t') {
-			char *name = hist->w;
-			int fd = rc_open(name, rAppend);
+			const char *name = hist->w;
+			const int fd = rc_open(name, rAppend);
 			if (fd < 0)
 				uerror(name);
 			else {
@@ -96,7 +96,7 @@ static void history() {
 
 /* read a character from a file descriptor */
 
-static int fdgchar() {
+static int fdgchar(void) {
 	if (chars_out >= chars_in) { /* replenish empty buffer */
 		ssize_t r;
 		do {
@@ -135,7 +135,7 @@ static int fdgchar() {
 
 /* read a character from a line-editing file descriptor */
 
-static int editgchar() {
+static int editgchar(void) {
 	if (chars_out >= chars_in) { /* replenish empty buffer */
 		edit_free(istack->cookie);
 		inbuf = edit_alloc(istack->cookie, &chars_in);
@@ -162,15 +162,15 @@ void termchange(void) {
 
 /* set up the input stack, and put a "dead" input at the bottom, so that yyparse will always read eof */
 
-extern void initinput() {
-	istack = itop = ealloc(istacksize = 256 * sizeof (Input));
+extern void initinput(void) {
+	istack = itop = enew_arr(Input, istacksize = 256);
 	istack->ungetcount = 0;
 	ugchar(EOF);
 }
 
 /* push an input source onto the stack. set up a new input buffer, and set gchar() */
 
-static void pushcommon() {
+static void pushcommon(void) {
 	size_t idiff;
 	istack->index = chars_out;
 	istack->read = chars_in;
@@ -180,8 +180,8 @@ static void pushcommon() {
 	istack->last = lastchar;
 	istack++;
 	idiff = istack - itop;
-	if (idiff >= istacksize / sizeof (Input)) {
-		itop = erealloc(itop, istacksize *= 2);
+	if (idiff >= istacksize) {
+		itop   = erenew_arr(Input, itop, (istacksize *= 2));
 		istack = itop + idiff;
 	}
 	chars_out = 0;
@@ -201,7 +201,7 @@ extern void pushfd(int fd) {
 	} else {
 		istack->t = iFd;
 		istack->gchar = fdgchar;
-		inbuf = ealloc(BUFSIZE);
+		inbuf = enew_arr(char, BUFSIZE);
 	}
 }
 
@@ -220,7 +220,7 @@ extern void pushstring(char **a, bool save) {
 
 /* remove an input source from the stack. restore associated variables etc. */
 
-extern void popinput() {
+extern void popinput(void) {
 	if (istack->t == iEdit)
 		edit_end(istack->cookie);
 	if (istack->t == iFd || istack->t == iEdit)
@@ -241,7 +241,7 @@ extern void popinput() {
 
 /* flush input characters up to newline. Used by scanerror() */
 
-extern void skiptonl() {
+extern void skiptonl(void) {
 	int c;
 	if (lastchar == '\n' || lastchar == EOF)
 		return;
@@ -254,19 +254,20 @@ extern void skiptonl() {
 
 /* the wrapper loop in rc: prompt for commands until EOF, calling yyparse and walk() */
 
-extern Node *doit(bool clobberexecit) {
+extern Node *doit(bool clobberexecitIn) {
+	volatile bool clobberexecit = clobberexecitIn;
 	bool eof;
 	bool execit;
 	Jbwrap j;
-	Estack e1;
 	Edata jerror;
+	Estack e1;
 
 	if (dashen)
 		clobberexecit = FALSE;
 	execit = clobberexecit;
-	sigsetjmp(j.j, 1);
-	jerror.jb = &j;
-	except(eError, jerror, &e1);
+	sigsetjmp(j.j, 1);           /* This sigsetjmp(j.j, 1) must occur before except(eError, jerror, &e1) below. */
+	jerror.jb = &j;              /* The reason: after syntax error longjmp comes here and needs another         */
+	except(eError, jerror, &e1); /* except(eError) to match unexcept(eError) after the for(eof) loop            */
 	for (eof = FALSE; !eof;) {
 		Edata block;
 		Estack e2;
@@ -303,8 +304,10 @@ extern Node *doit(bool clobberexecit) {
 				edit_prompt(istack->cookie, prompt);
 		}
 		inityy();
-		if (yyparse() == 1 && execit)
+		if (yyparse(/*yylex*/) == 1 && execit) {
+			setN(2); /* syntax error */
 			rc_raise(eError);
+		}
 		eof = (lastchar == EOF); /* "lastchar" can be clobbered during a walk() */
 		if (parsetree != NULL) {
 			if (RC_DEVELOP)
@@ -324,7 +327,7 @@ extern Node *doit(bool clobberexecit) {
 /* parse a function imported from the environment */
 
 extern Node *parseline(char *extdef) {
-	bool i = interactive;
+	const bool i = interactive;
 	char *in[2];
 	Node *fun;
 	in[0] = extdef;
@@ -338,7 +341,7 @@ extern Node *parseline(char *extdef) {
 
 /* close file descriptors after a fork() */
 
-extern void closefds() {
+extern void closefds(void) {
 	Input *i;
 	for (i = istack; i != itop; --i)	/* close open scripts */
 		if (i->t == iFd && i->fd > 2) {
@@ -349,7 +352,7 @@ extern void closefds() {
 
 /* print (or set) prompt(2) */
 
-extern void nextline() {
+extern void nextline(void) {
 	lineno++;
 	if (interactive) {
 		if (istack->t == iFd)

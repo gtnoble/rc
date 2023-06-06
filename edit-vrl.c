@@ -8,7 +8,7 @@
 extern char *readline(char *);
 extern void add_history(char *);
 
-bool editing = 1;
+const bool editing = 1;
 
 struct cookie {
 	char *buffer;
@@ -32,7 +32,7 @@ void *edit_begin(int fd) {
 }
 
 /*
-static void (*oldint)(int), (*oldquit)(int);
+static Sigfunc *oldint, *oldquit;
 
 static void edit_catcher(int sig) {
 	sys_signal(SIGINT, oldint);
@@ -48,12 +48,14 @@ char *edit_alloc(void *cookie, size_t *count) {
 /*
 	const char *r;
 	HistEvent he;
+	int intCount;
 	struct cookie *c = cookie;
 
 	oldint = sys_signal(SIGINT, edit_catcher);
 	oldquit = sys_signal(SIGQUIT, edit_catcher);
 
-	r = el_gets(c->el, count);
+	r = el_gets(c->el, &intCount);
+	*count = intCount;
 
 	sys_signal(SIGINT, oldint);
 	sys_signal(SIGQUIT, oldquit);

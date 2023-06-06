@@ -64,17 +64,17 @@ static char *rc_basename(char *s) {
 
 /* stupid O(n^2) substring matching routine */
 
-static char *isin(char *target, char *pattern) {
+static char *isin(const char *target, const char *pattern) {
 	size_t plen = strlen(pattern);
 	size_t tlen = strlen(target);
 	for (; tlen >= plen; target++, --tlen)
-		if (strncmp(target, pattern, plen) == 0)
+		if (strncmp_fast(target, pattern, plen) == 0)
 			return target;
 	return NULL;
 }
 
 /* replace the first match in the string with "new" */
-static char *sub(char *s, char *old, char *new) {
+static char *sub(const char *s, const char *old, const char *new) {
 	char *t, *u;
 
 	t = isin(s, old);
@@ -95,14 +95,14 @@ static char *edit(char *s) {
 	char *final, *f, *end;
 	int col;
 	bool ins;
-	
+
 start:
-	fprintf(stderr, "%s\n", s);	
+	fprintf(stderr, "%s\n", s);
 	f = final = newstr();
 	end = s + strlen(s);
 	col = 0;
 	ins = FALSE;
-	
+
 	for (;; col++) {
 		int	c = getchar();
 
@@ -115,7 +115,7 @@ start:
 		if (c == '\n') {
 			if (col == 0)
 				return s;
-			
+
 			while (s < end) /* copy remainder of string */
 				*f++ = *s++;
 			*f = '\0';
@@ -134,12 +134,14 @@ start:
 			case '%':
 				c = ' ';
 				/* FALLTHROUGH */
+				/* FALLTHRU */
 			default:
 				*f++ = c;
-				break;	
+				break;
 			case EOF:
 				exit(1);
 				/* NOTREACHED */
+				/* FALLTHRU */
 			case ' ':
 				if (*s == '\t') {
 					int	oldcol = col;

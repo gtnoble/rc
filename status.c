@@ -17,7 +17,7 @@ static int pipelength = 1;
    if and only if every pipe-member has an exit status of zero.
 */
 
-extern int istrue() {
+extern int istrue(void) {
 	int i;
 	for (i = 0; i < pipelength; i++)
 		if (statuses[i] != 0)
@@ -32,7 +32,7 @@ extern int istrue() {
    a pipeline with nonzero exit statuses in it just sets status to 1.
 */
 
-extern int getstatus() {
+extern int getstatus(void) {
 	int s;
 	if (pipelength > 1)
 		return !istrue();
@@ -42,13 +42,32 @@ extern int getstatus() {
 	return WEXITSTATUS(s);
 }
 
+extern void setN(int code) {
+	int scode = 0;
+	switch (code) {
+	case 0:
+		scode = STATUS0;
+		break;
+	case 1:
+		scode = STATUS1;
+		break;
+	case 2:
+		scode = STATUS2;
+		break;
+	default:
+		scode = STATUS1;
+		break;
+	}
+	setstatus(-1, scode);
+}
+
 extern void set(bool code) {
 	setstatus(-1, code ? STATUS0 : STATUS1);
 }
 
 /* take a pipeline and store the exit statuses. Check to see whether any of the children dumped core */
 
-extern void setpipestatus(int stats[], int num) {
+extern void setpipestatus(const int stats[], int num) {
 	int i;
 	for (i = 0; i < (pipelength = num); i++) {
 		statuses[i] = stats[i];
@@ -68,8 +87,8 @@ extern void setstatus(pid_t pid, int i) {
 
 static void statprint(pid_t pid, int i) {
 	if (WIFSIGNALED(i)) {
-		int t = WTERMSIG(i);
-		char *msg = ((t > 0) && (t < NUMOFSIGNALS) ? signals[WTERMSIG(i)].msg : "");
+		const int t = WTERMSIG(i);
+		const char *msg = ((t > 0) && (t < NUMOFSIGNALS) ? signals[WTERMSIG(i)].msg : "");
 		if (pid != -1)
 			fprint(2, "%ld: ", (long)pid);
 		if (myWIFDUMPED(i)) {
@@ -86,7 +105,7 @@ static void statprint(pid_t pid, int i) {
 
 /* prepare a list to be passed back. Used whenever $status is dereferenced */
 
-extern List *sgetstatus() {
+extern List *sgetstatus(void) {
 	List *r = NULL;
 	int i;
 
@@ -105,7 +124,7 @@ extern List *sgetstatus() {
 
 extern char *strstatus(int s) {
 	if (WIFSIGNALED(s)) {
-		int t = WTERMSIG(s);
+		const int t = WTERMSIG(s);
 		const char *core = myWIFDUMPED(s) ? "+core" : "";
 		if ((t > 0) && (t < NUMOFSIGNALS) && *signals[t].name != '\0')
 			return nprint("%s%s", signals[t].name, core);
@@ -115,14 +134,14 @@ extern char *strstatus(int s) {
 		return nprint("%d", WEXITSTATUS(s));
 }
 
-extern void ssetstatus(char **av) {
-	int i, j, k, l;
-	bool found;
+extern void ssetstatus(char * const*av) {
+	int i, l;
 	for (l = 0; av[l] != NULL; l++)
 		; /* count up array length */
 	--l;
 	for (i = 0; av[i] != NULL; i++) {
-		j = a2u(av[i]);
+		int k, j = a2u(av[i]);
+		bool found;
 		if (j >= 0) {
 			statuses[l - i] = j << 8;
 			continue;
@@ -135,8 +154,8 @@ extern void ssetstatus(char **av) {
 				break;
 			}
 			else {
-				size_t len = strlen(signals[k].name);
-				if (strncmp(signals[k].name, av[i], len) == 0 && streq(av[i] + len, "+core")) {
+				const size_t len = strlen(signals[k].name);
+				if (strncmp_fast(signals[k].name, av[i], len) == 0 && streq(av[i] + len, "+core")) {
 					statuses[l - i] = k + 0x80;
 					found = TRUE;
 					break;

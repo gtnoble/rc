@@ -32,6 +32,7 @@ typedef enum wordstates {
 } wordstates;
 
 static void getpair(int);
+static void scanerror(const char *s);
 
 int lineno;
 
@@ -86,7 +87,7 @@ enum filedescriptors {
 };
 
 /* does this string require quoting? */
-extern bool quotep(char *s, bool dollar) {
+extern bool quotep(const char *s, bool dollar) {
 	unsigned char c;
 	const char *meta;
 
@@ -97,7 +98,7 @@ extern bool quotep(char *s, bool dollar) {
 	return FALSE;
 }
 
-extern int yylex() {
+extern int yylex(void) {
 	static bool dollar = FALSE;
 	bool saw_meta = FALSE;
 	int c;
@@ -130,7 +131,7 @@ top:	while ((c = gchar()) == ' ' || c == '\t')
 			if (c == '?' || c == '[' || c == '*')
 				saw_meta = TRUE;
 			if (i >= bufsize)
-				buf = realbuf = erealloc(buf, bufsize *= 2);
+				buf = realbuf = erenew_arr(char, buf, bufsize *= 2);
 		} while ((c = gchar()) != EOF && !meta[(unsigned char) c]);
 		while (c == '\\') {
 			if ((c = gchar()) == '\n') {
@@ -141,7 +142,7 @@ top:	while ((c = gchar()) == ' ' || c == '\t')
 	bs:			if (meta != dnw) { /* all words but varnames may have a bslash */
 					buf[i++] = '\\';
 					if (i >= bufsize)
-						buf = realbuf = erealloc(buf, bufsize *= 2);
+						buf = realbuf = erenew_arr(char, buf, bufsize *= 2);
 					if (!meta[(unsigned char) c])
 						goto read;
 				} else {
@@ -159,7 +160,6 @@ top:	while ((c = gchar()) == ' ' || c == '\t')
 			if (*buf == 'f' && buf[1] == 'n') return FN;
 			if (*buf == 'i' && buf[1] == 'n') return IN;
 		}
-		if (streq(buf, "not")) return NOT;
 		if (streq(buf, "for")) return FOR;
 		if (streq(buf, "else")) return ELSE;
 		if (streq(buf, "switch")) return SWITCH;
@@ -168,10 +168,10 @@ top:	while ((c = gchar()) == ' ' || c == '\t')
 		w = RW;
 		y->word.w = ncpy(buf);
 		if (saw_meta) {
-			char *r, *s;
-
-			y->word.m = nalloc(strlen(buf) + 1);
-			for (r = buf, s = y->word.m; *r != '\0'; r++, s++)
+			const char *r;
+			char *s;
+			y->word.m = s = nnew_arr(char, strlen(buf) + 1);
+			for (r = buf; *r != '\0'; r++, s++)
 				*s = (*r == '?' || *r == '[' || *r == '*');
 		} else {
 			y->word.m = NULL;
@@ -220,7 +220,7 @@ top:	while ((c = gchar()) == ' ' || c == '\t')
 				return HUH;
 			}
 			if (i >= bufsize)
-				buf = realbuf = erealloc(buf, bufsize *= 2);
+				buf = realbuf = erenew_arr(char, buf, bufsize *= 2);
 		}
 		ugchar(c);
 		buf[i] = '\0';
@@ -249,15 +249,18 @@ top:	while ((c = gchar()) == ' ' || c == '\t')
 			if (c == EOF)
 				return END;
 		/* FALLTHROUGH */
+		/* FALLTHRU */
 	case '\n':
 		lineno++;
 		newline = TRUE;
 		/* FALLTHROUGH */
+		/* FALLTHRU */
 	case ';':
 	case '^':
 	case ')':
 	case '{': case '}':
 		w = NW;
+		/* FALLTHRU */
 	case '=':
 		return c;
 	case '&':
@@ -330,7 +333,7 @@ top:	while ((c = gchar()) == ' ' || c == '\t')
 }
 
 extern void yyerror(const char *s) {
-	char *tok;
+	const char *tok;
 	if (prerror) { /* don't print "syntax error" if there's a more informative scanerror */
 		prerror = FALSE;
 		return;
@@ -349,13 +352,13 @@ extern void yyerror(const char *s) {
 		fprint(2, "rc: %s\n", s);
 }
 
-extern void scanerror(char *s) {
+static void scanerror(const char *s) {
 	skiptonl(); /* flush up to newline */
 	yyerror(s);
 	errset = prerror = TRUE;
 }
 
-extern void inityy() {
+extern void inityy(void) {
 	newline = FALSE;
 	w = NW;
 	hq = NULL;
@@ -363,9 +366,9 @@ extern void inityy() {
 	if (bufsize > BUFMAX && realbuf != NULL) {
 		efree(realbuf);
 		bufsize = BUFSIZE;
-		realbuf = ealloc(bufsize);
+		realbuf = enew_arr(char, bufsize);
 	} else if (realbuf == NULL)
-		realbuf = ealloc(bufsize);
+		realbuf = enew_arr(char, bufsize);
 }
 
 /*

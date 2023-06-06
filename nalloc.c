@@ -1,4 +1,13 @@
 /* nalloc.c: a simple single-arena allocator for command-line-lifetime allocation */
+
+/*
+ * Maybe useful:
+ *
+ * Fast Allocation and Deallocation of Memory Based on Object Lifetimes
+ * David R.Hanson
+ * Software - Practice and Experience, Vol. 20(1), 5-12 (January 1990)
+ */
+
 #include "rc.h"
 
 static struct Block {
@@ -18,14 +27,14 @@ static void getblock(size_t n) {
 	for (r = fl, p = NULL; r != NULL; p = r, r = r->n)
 		if (n <= r->size)
 			break;	/* look for a block which fits the request */
-	if (r != NULL) {	/* if one is found, take it off the free list */	
+	if (r != NULL) {	/* if one is found, take it off the free list */
 		if (p != NULL)
 			p->n = r->n;
 		else
 			fl = r->n;
 	} else {		/* else allocate a new block */
 		r = enew(Block);
-		r->mem = ealloc(r->size = alignto(n, BLOCKSIZE));
+		r->mem = enew_arr(char, r->size = alignto(n, BLOCKSIZE));
 	}
 	r->used = 0;
 	r->n = ul;
@@ -65,7 +74,7 @@ extern void *nalloc(size_t n) {
 
 #define MAXMEM 500000
 
-extern void nfree() {
+static void nfree(void) {
 	size_t count;
 	Block *r;
 	if (ul == NULL)
@@ -96,7 +105,7 @@ extern void nfree() {
    calling routine to keep the old value of the block around.
 */
 
-extern Block *newblock() {
+extern Block *newblock(void) {
 	Block *old = ul;
 	ul = NULL;
 	return old;
@@ -137,3 +146,4 @@ extern void efree(void *p) {
 	if (p != NULL)
 		free(p);
 }
+

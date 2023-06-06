@@ -13,6 +13,8 @@
 #include <sys/stat.h>
 #include <setjmp.h>
 #include <errno.h>
+#include <limits.h>
+#include <wait.h>
 
 #include "addon.h"
 #include "input.h"
@@ -32,50 +34,86 @@ static void b_limit(char **);
 static void b_echo(char **);
 #endif
 
-static struct {
+
+typedef struct BuiltinMap {
 	builtin_t *p;
-	char *name;
-} builtins[] = {
-	{ b_break,	"break" },
+	const char *name;
+} BuiltinMap;
+
+static BuiltinMap
+builtins[] = {
+	{ b_dot,		"." },
+	{ b_break,		"break" },
 	{ b_builtin,	"builtin" },
-	{ b_cd,		"cd" },
+#ifdef RC_ADDON
+	{ b_calc,		"calc" },
+#endif
+	{ b_cd,			"cd" },
 	{ b_continue,	"continue" },
 #if RC_ECHO
-	{ b_echo,	"echo" },
+	{ b_echo,		"echo" },
 #endif
-	{ b_eval,	"eval" },
-	{ b_exec,	"exec" },
-	{ b_exit,	"exit" },
-	{ b_flag,	"flag" },
+	{ b_eval,		"eval" },
+	{ b_exec,		"exec" },
+	{ b_exit,		"exit" },
+	{ b_flag,		"flag" },
+#ifdef RC_ADDON
+	{ b_kill,		"kill" },
+	//{ b_calc,		"let" },
+#endif
 #if HAVE_SETRLIMIT
-	{ b_limit,	"limit" },
+	{ b_limit,		"limit" },
 #endif
 	{ b_newpgrp,	"newpgrp" },
-	{ b_return,	"return" },
-	{ b_shift,	"shift" },
-	{ b_umask,	"umask" },
-	{ b_wait,	"wait" },
-	{ b_whatis,	"whatis" },
-	{ b_dot,	"." },
+	{ b_return,		"return" },
+	{ b_shift,		"shift" },
+	{ b_umask,		"umask" },
+	{ b_wait,		"wait" },
+	{ b_whatis,		"whatis" },
 #ifdef ADDONS
 	ADDONS
 #endif
 };
 
-extern builtin_t *isbuiltin(char *s) {
-    int i;
-    for (i = 0; i < arraysize(builtins); i++)
-	if (streq(builtins[i].name, s))
-	    return builtins[i].p;
-    return NULL;
+extern bool q_builtins_ordered(void) {
+	const int N = arraysize(builtins);
+	int i, j;
+
+	for (i = 0, j = 1; j < N; ++i, ++j) {
+		if (strcmp_fast(builtins[i].name, builtins[j].name) >= 0) {
+			fprint(2, "Builtin '%s' at %d is listed before builtin '%s' at %d, but is larger\n",
+			       builtins[i].name, i, builtins[j].name, j);
+			return FALSE;
+		}
+	}
+	return TRUE;
 }
+
+extern builtin_t *isbuiltin(const char *s) {
+	const BuiltinMap *pi = &builtins[0], *pj = &builtins[arraysize(builtins)];
+
+	while (pi < pj) {
+		const BuiltinMap *const pm = pi + (pj - pi) / 2;
+		const int c = strcmp_fast(pm->name, s);
+		if (c > 0) {
+			pj = pm;
+		} else if (c < 0) {
+			pi = pm + 1;
+		} else {
+			return pm->p;
+		}
+	}
+
+	return NULL;
+}
+
 
 /* funcall() is the wrapper used to invoke shell functions. pushes $*, and "return" returns here. */
 
 extern void funcall(char **av) {
 	Jbwrap j;
-	Estack e1, e2;
 	Edata jreturn, star;
+	Estack e1, e2;
 	if (sigsetjmp(j.j, 1))
 		return;
 	starassign(*av, av+1, TRUE);
@@ -89,14 +127,14 @@ extern void funcall(char **av) {
 	unexcept(eReturn);
 }
 
-static void arg_count(char *name) {
-    fprint(2, RC "too many arguments to %s\n", name);
-    set(FALSE);
+static void arg_count(const char *name) {
+	fprint(2, RC "too many arguments to %s\n", name);
+	set(FALSE);
 }
 
-static void badnum(char *num) {
-    fprint(2, RC "`%s' is a bad number\n", num);
-    set(FALSE);
+static void badnum(const char *num) {
+	fprint(2, RC "`%s' is a bad number\n", num);
+	set(FALSE);
 }
 
 /* a dummy command. (exec() performs "exec" simply by not forking) */
@@ -108,90 +146,105 @@ extern void b_exec(char **ignore) {
 /* echo -n omits a newline. echo -- -n echos '-n' */
 
 static void b_echo(char **av) {
-    char *format = "%A\n";
-    if (*++av != NULL) {
-	if (streq(*av, "-n"))
-	    format = "%A", av++;
-	else if (streq(*av, "--"))
-	    av++;
-    }
-    fprint(1, format, av);
-    set(TRUE);
+	const char *format = "%A\n";
+	if (*++av != NULL) {
+		if (streq(*av, "-n"))
+			format = "%A", av++;
+		else if (streq(*av, "--"))
+			av++;
+	}
+	fprint(1, format, av);
+	set(TRUE);
 }
 #endif
+
+static void update_cwd_var(void) {
+	char b[PATH_MAX + 1];
+	List val;
+	const char *ret = getcwd(b, arraysize(b) - 1);
+	if (ret) {
+		val.w = nprint("%s", b);
+		val.n = NULL;
+		varassign("pwd", &val, FALSE);
+	}
+}
+
 
 /* cd. traverse $cdpath if the directory given is not an absolute pathname */
 
 static void b_cd(char **av) {
-    List *s, nil;
-    char *path = NULL;
-    size_t t, pathlen = 0;
-    if (*++av == NULL) {
-	s = varlookup("home");
-	*av = (s == NULL) ? "/" : s->w;
-    } else if (av[1] != NULL) {
-	arg_count("cd");
-	return;
-    }
-    if (isabsolute(*av) || streq(*av, ".") || streq(*av, "..")) { /* absolute pathname? */
-	if (chdir(*av) < 0) {
-	    set(FALSE);
-	    uerror(*av);
-	} else
-	    set(TRUE);
-    } else {
-	s = varlookup("cdpath");
-	if (s == NULL) {
-	    s = &nil;
-	    nil.w = "";
-	    nil.n = NULL;
-	}
-	do {
-	    if (s != &nil && *s->w != '\0') {
-		t = strlen(*av) + strlen(s->w) + 2;
-		if (t > pathlen)
-		    path = nalloc(pathlen = t);
-		strcpy(path, s->w);
-		if (!streq(s->w, "/")) /* "//" is special to POSIX */
-		    strcat(path, "/");
-		strcat(path, *av);
-	    } else {
-		pathlen = 0;
-		path = *av;
-	    }
-	    if (chdir(path) >= 0) {
-		set(TRUE);
-		if (interactive && *s->w != '\0' && !streq(s->w, "."))
-		    fprint(1, "%s\n", path);
+	if (*++av == NULL) {
+		List *s2 = varlookup("home");
+		*av = (s2 == NULL) ? "/" : s2->w;
+	} else if (av[1] != NULL) {
+		arg_count("cd");
 		return;
-	    }
-	    s = s->n;
-	} while (s != NULL);
-	fprint(2, "couldn't cd to %s\n", *av);
-	set(FALSE);
-    }
+	}
+	if (isabsolute(*av) || streq(*av, ".") || streq(*av, "..")) { /* absolute pathname? */
+		if (chdir(*av) < 0) {
+			set(FALSE);
+			uerror(*av);
+		} else {
+			update_cwd_var();
+			set(TRUE);
+		}
+	} else {
+		char *path = NULL;
+		size_t pathlen = 0;
+		List nil;
+		List *s = varlookup("cdpath");
+		if (s == NULL) {
+			s = &nil;
+			nil.w = "";
+			nil.n = NULL;
+		}
+		do {
+			if (s != &nil && *s->w != '\0') {
+				const size_t t = strlen(*av) + strlen(s->w) + 2;
+				if (t > pathlen)
+					path = nnew_arr(char, pathlen = t);
+				strcpy(path, s->w);
+				if (!streq(s->w, "/")) /* "//" is special to POSIX */
+					strcat(path, "/");
+				strcat(path, *av);
+			} else {
+				pathlen = 0;
+				path = *av;
+			}
+			if (chdir(path) >= 0) {
+				update_cwd_var();
+				set(TRUE);
+				if (interactive && *s->w != '\0' && !streq(s->w, "."))
+					fprint(1, "%s\n", path);
+				return;
+			}
+			s = s->n;
+		} while (s != NULL);
+		fprint(2, "couldn't cd to %s\n", *av);
+		set(FALSE);
+	}
 }
 
 static void b_umask(char **av) {
-    int i;
-    if (*++av == NULL) {
-	set(TRUE);
-	i = umask(0);
-	umask(i);
-	fprint(1, "0%o\n", i);
-    } else if (av[1] == NULL) {
-	i = o2u(*av);
-	if ((unsigned int) i > 0777) {
-	    fprint(2, "bad umask\n");
-	    set(FALSE);
+	int i;
+	if (*++av == NULL) {
+		set(TRUE);
+		i = umask(0);
+		umask(i);
+		fprint(1, "0%o\n", i);
+	} else if (av[1] == NULL) {
+		i = o2u(*av);
+		if ((unsigned int) i > 0777) {
+			fprint(2, "bad umask\n");
+			set(FALSE);
+		} else {
+			umask(i);
+			set(TRUE);
+		}
 	} else {
-	    umask(i);
-	    set(TRUE);
+		arg_count("umask");
+		return;
 	}
-    } else {
-	arg_count("umask");
-	return;
-    }
 }
 
 static void b_exit(char **av) {
@@ -346,9 +399,11 @@ static void b_wait(char **av) {
 		badnum(av[1]);
 		return;
 	}
-	if (rc_wait4(pid, &status, FALSE) > 0)
+	if (rc_wait4(pid, &status, FALSE) > 0) {
 		setstatus(pid, status);
-	else
+		if (WIFEXITED(status))
+			fprint(2, "%ld: exited (%d)\n", pid, WEXITSTATUS(status));
+	} else
 		set(FALSE);
 	sigchk();
 }
@@ -361,7 +416,7 @@ static void b_wait(char **av) {
 #define not(b)	((b)^TRUE)
 #define show(b)	(not(eff|vee|pee|bee|ess)|(b))
 
-static bool issig(char *s) {
+static bool issig(const char *s) {
 	int i;
 	for (i = 0; i < NUMOFSIGNALS; i++)
 		if (streq(s, signals[i].name))
@@ -371,11 +426,8 @@ static bool issig(char *s) {
 
 static void b_whatis(char **av) {
 	bool ess, eff, vee, pee, bee;
-	bool f, found;
+	bool found;
 	int i, ac, c;
-	List *s;
-	Node *n;
-	char *e;
 	for (rc_optind = ac = 0; av[ac] != NULL; ac++)
 		; /* count the arguments for getopt */
 	ess = eff = vee = pee = bee = FALSE;
@@ -406,7 +458,10 @@ static void b_whatis(char **av) {
 	}
 	found = TRUE;
 	for (i = 0; av[i] != NULL; i++) {
-		f = FALSE;
+		const char *e;
+		List *s;
+		Node *n;
+		bool f = FALSE;
 		errno = ENOENT;
 		if (show(vee) && (s = varlookup(av[i])) != NULL) {
 			f = TRUE;
@@ -436,7 +491,7 @@ static void b_whatis(char **av) {
 /* push a string to be eval'ed onto the input stack. evaluate it */
 
 static void b_eval(char **av) {
-	bool i = interactive;
+	const bool i = interactive;
 	if (av[1] == NULL)
 		return;
 	interactive = FALSE;
@@ -452,7 +507,8 @@ static void b_eval(char **av) {
 
 extern void b_dot(char **av) {
 	int fd;
-	bool old_i = interactive, i = FALSE;
+	const bool old_i = interactive;
+	bool i = FALSE;
 	Estack e;
 	Edata star;
 	av++;
@@ -563,7 +619,6 @@ static void printlimit(const struct Limit *limit, bool hard) {
 
 static bool parselimit(const struct Limit *resource, rlim_t *limit, char *s) {
 	char *t;
-	int len = strlen(s);
 	const struct Suffix *suf = resource->suffix;
 
 	*limit = 1;
@@ -579,6 +634,7 @@ static bool parselimit(const struct Limit *resource, rlim_t *limit, char *s) {
 		*limit = 60 * min + sec;
 	} else {
 		int n;
+		const int len = strlen(s);
 		for (; suf != NULL; suf = suf->next)
 			if (streq(suf->name, s + len - strlen(suf->name))) {
 				s[len - strlen(suf->name)] = '\0';

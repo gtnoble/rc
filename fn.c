@@ -15,16 +15,17 @@ static void fn_handler(int), dud_handler(int);
 
 static bool runexit = FALSE;
 static Node *handlers[NUMOFSIGNALS], null;
-static void (*def_sigint)(int) = SIG_DFL;
-static void (*def_sigquit)(int) = SIG_DFL;
-static void (*def_sigterm)(int) = SIG_DFL;
+
+static Sigfunc* def_sigint  = SIG_DFL;
+static Sigfunc* def_sigquit = SIG_DFL;
+static Sigfunc* def_sigterm = SIG_DFL;
 
 /*
    Set signals to default values for rc. This means that interactive
    shells ignore SIGTERM, etc.
 */
 
-extern void inithandler() {
+extern void inithandler(void) {
 	int i;
 	null.type = nBody;
 	null.u[0].p = null.u[1].p = NULL;
@@ -91,6 +92,7 @@ extern void setsigdefaults(bool sysvbackground) {
 			case SIGTERM:
 				def_sigterm = SIG_DFL;
 				/* FALLTHROUGH */
+				/* FALLTHRU */
 			sigcommon:
 			default:
 				if (sighandlers[i] != SIG_DFL) {
@@ -141,13 +143,13 @@ static void dud_handler(int ignore) {
    a signal, and set the signal vectors appropriately.
 */
 
-extern void fnassign(char *name, Node *def) {
+extern void fnassign(const char *name, const Node *def) {
 	Node *newdef = treecpy(def == NULL ? &null : def, ealloc); /* important to do the treecopy first */
 	rc_Function *new = get_fn_place(name);
-	int i;
 	new->def = newdef;
 	new->extdef = NULL;
-	if (strncmp(name, "sig", conststrlen("sig")) == 0) { /* slight optimization */
+	if (strncmp_fast(name, "sig", conststrlen("sig")) == 0) { /* slight optimization */
+		int i;
 		if (streq(name, "sigchld") || streq(name, "sigcld"))
 			rc_error("can't trap SIGCHLD");
 		if (streq(name, "sigexit"))
@@ -166,7 +168,7 @@ extern void fnassign(char *name, Node *def) {
 
 /* Assign a function from the environment. Store just the external representation */
 
-extern void fnassign_string(char *extdef) {
+extern void fnassign_string(const char *extdef) {
 	char *name = get_name(extdef+3); /* +3 to skip over "fn_" */
 	rc_Function *new;
 	if (name == NULL)
@@ -178,7 +180,7 @@ extern void fnassign_string(char *extdef) {
 
 /* Return a function in Node form, evaluating an entry from the environment if necessary */
 
-extern Node *fnlookup(char *name) {
+extern Node *fnlookup(const char *name) {
 	rc_Function *look = lookup_fn(name);
 	Node *ret;
 	if (look == NULL)
@@ -199,7 +201,7 @@ extern Node *fnlookup(char *name) {
 
 /* Return a function in string form (used by makeenv) */
 
-extern char *fnlookup_string(char *name) {
+extern char *fnlookup_string(const char *name) {
 	rc_Function *look = lookup_fn(name);
 
 	if (look == NULL)
@@ -214,7 +216,7 @@ extern char *fnlookup_string(char *name) {
    handler, restore the signal handler to its default value.
 */
 
-extern void fnrm(char *name) {
+extern void fnrm(const char *name) {
 	int i;
 	for (i = 1; i < NUMOFSIGNALS; i++)
 		if (streq(signals[i].name, name)) {
@@ -238,7 +240,7 @@ extern void fnrm(char *name) {
 	delete_fn(name);
 }
 
-extern void whatare_all_signals() {
+extern void whatare_all_signals(void) {
 	int i;
 	for (i = 1; i < NUMOFSIGNALS; i++)
 		if (*signals[i].name != '\0') {
@@ -251,6 +253,6 @@ extern void whatare_all_signals() {
 		}
 }
 
-extern void prettyprint_fn(int fd, char *name, Node *n) {
+extern void prettyprint_fn(int fd, const char *name, const Node *n) {
 	fprint(fd, "fn %S {%T}\n", name, n);
 }

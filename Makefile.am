@@ -2,6 +2,9 @@
 
 EDIT=@EDIT@
 
+AM_CFLAGS=-fPIE  -fstack-protector
+AM_LDFLAGS=-pie -Wl,-z,now,-z,relro
+
 if AMC_HISTORY
 man_MANS = rc.1 history.1
 HISTORY = history
@@ -51,7 +54,16 @@ status.o: statval.h
 statval.h: mkstatval
 	./mkstatval > statval.h
 
-DISTCLEANFILES = parse.c parse.h sigmsgs.c sigmsgs.h statval.h
+DISTCLEANFILES = parse.c parse.h calc.tab.c calc.tab.h sigmsgs.c sigmsgs.h statval.h
+
+YACC=byacc
+parse.c parse.h: $(srcdir)/parse.y
+	$(YACC) -d $(srcdir)/parse.y
+	mv y.tab.c parse.c
+	mv y.tab.h parse.h
+
+calc.c calc.h : $(srcdir)/calc.y
+	$(YACC) -d -o calc -p calc $(srcdir)/calc.y
 
 check: trip
 

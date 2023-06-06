@@ -1,8 +1,10 @@
 /* main.c: handles initialization of rc and command line options */
+#include <limits.h>
 
 #include "rc.h"
 
 #include <errno.h>
+#include <sys/time.h>
 
 #include "input.h"
 
@@ -11,19 +13,28 @@ bool dashpee, dashoh, dashess, dashvee, dashex;
 bool interactive;
 static bool dashEYE;
 char *dashsee[2];
-pid_t rc_pid;
+pid_t rc_pid, rc_ppid;
 
 
-static void assigndefault(char *,...);
+static void assigndefault(const char *,...);
 static void checkfd(int, enum redirtype);
 
 extern int main(int argc, char *argv[], char *envp[]) {
 	char *dollarzero, *null[1];
 	int c;
 	initprint();
+	if (!q_builtins_ordered()) {
+		panic("Builtins data structure not ordered");
+	}
 	dashsee[0] = dashsee[1] = NULL;
 	dollarzero = argv[0];
+	{
+		struct timeval timeVal;
+		gettimeofday(&timeVal, 0);
+		srandom(20021003 ^ timeVal.tv_usec);
+	}
 	rc_pid = getpid();
+	rc_ppid = getppid();
 	dashell = (*argv[0] == '-'); /* Unix tradition */
 	while ((c = rc_getopt(argc, argv, "c:deiIlnopsvx")) != -1)
 		switch (c) {
@@ -88,6 +99,14 @@ quitopts:
 	assigndefault("path", DEFAULTPATH, (void *)0);
 #endif
 	assigndefault("pid", nprint("%d", rc_pid), (void *)0);
+	assigndefault("ppid", nprint("%d", rc_ppid), (void *)0);
+	{
+		char b[PATH_MAX + 1];
+		const char *ret = getcwd(b, arraysize(b) - 1);
+		if (ret) {
+			assigndefault("pwd", nprint("%s", b), (void *)0);
+		}
+	}
 	assigndefault("prompt", "; ", "", (void *)0);
 	assigndefault("tab", "\t", (void *)0);
 	assigndefault("version",
@@ -105,6 +124,27 @@ quitopts:
 		int fd;
 
 		rcrc = concat(varlookup("home"), word("/.rcrc", NULL))->w;
+		fd = rc_open(rcrc, rFrom);
+		if (fd == -1) {
+			if (errno != ENOENT)
+				uerror(rcrc);
+		} else {
+			bool push_interactive;
+
+			pushfd(fd);
+			push_interactive = interactive;
+			interactive = FALSE;
+			doit(TRUE);
+			interactive = push_interactive;
+			close(fd);
+		}
+	}
+
+	{
+		char *rcrc;
+		int fd;
+
+		rcrc = concat(varlookup("home"), word("/.rcrc-nonlogin", NULL))->w;
 		fd = rc_open(rcrc, rFrom);
 		if (fd == -1) {
 			if (errno != ENOENT)
@@ -140,7 +180,7 @@ quitopts:
 	return 0; /* Never really reached. */
 }
 
-static void assigndefault(char *name,...) {
+static void assigndefault(const char *name,...) {
 	va_list ap;
 	List *l;
 	char *v;
@@ -157,7 +197,7 @@ static void assigndefault(char *name,...) {
 /* open an fd on /dev/null if it is inherited closed */
 
 static void checkfd(int fd, enum redirtype r) {
-	int new = rc_open("/dev/null", r);
+	const int new = rc_open("/dev/null", r);
 	if (new != fd && new != -1)
 		close(new);
 }

@@ -1,9 +1,12 @@
 /* walk.c: walks the parse tree. */
 
 #include "rc.h"
+#include "wait.h"
 
 #include <signal.h>
 #include <setjmp.h>
+#include <termios.h>
+#include <unistd.h>
 
 #include "jbwrap.h"
 
@@ -13,14 +16,11 @@
 */
 bool cond = FALSE;
 
-static bool haspreredir(Node *);
-static bool isallpre(Node *);
+static bool haspreredir(const Node *);
+static bool isallpre(const Node *);
 static bool dofork(bool);
-static void dopipe(Node *);
-static void loop_body(Node* n);
-
-enum if_state { if_false, if_true, if_nothing };
-enum if_state if_last = if_nothing;
+static void dopipe(const Node *);
+static void loop_body(const Node *n);
 
 /* Tail-recursive version of walk() */
 
@@ -28,7 +28,8 @@ enum if_state if_last = if_nothing;
 
 /* walk the parse-tree. "obvious". */
 
-extern bool walk(Node *n, bool parent) {
+extern bool walk(const Node *nd, bool parent) {
+	const Node *volatile n = nd;
 top:	sigchk();
 	if (n == NULL) {
 		if (!parent)
@@ -69,7 +70,7 @@ top:	sigchk();
 		break;
 	}
 	case nAndalso: {
-		bool oldcond = cond;
+		const bool oldcond = cond;
 		cond = TRUE;
 		if (walk(n->u[0].p, TRUE)) {
 			cond = oldcond;
@@ -79,7 +80,7 @@ top:	sigchk();
 		break;
 	}
 	case nOrelse: {
-		bool oldcond = cond;
+		const bool oldcond = cond;
 		cond = TRUE;
 		if (!walk(n->u[0].p, TRUE)) {
 			cond = oldcond;
@@ -92,31 +93,22 @@ top:	sigchk();
 		set(!walk(n->u[0].p, TRUE));
 		break;
 	case nIf: {
-		bool oldcond = cond;
-		enum if_state if_this;
+		const bool oldcond = cond;
 		Node *true_cmd = n->u[1].p, *false_cmd = NULL;
 		if (true_cmd != NULL && true_cmd->type == nElse) {
 			false_cmd = true_cmd->u[1].p;
 			true_cmd = true_cmd->u[0].p;
 		}
 		cond = TRUE;
-		if_this = walk(n->u[0].p, TRUE);
+		if (!walk(n->u[0].p, TRUE))
+			true_cmd = false_cmd; /* run the else clause */
 		cond = oldcond;
-		if (if_last == if_nothing) if_last = if_this;
-		walk(if_this ? true_cmd : false_cmd, parent);
-		break;
-	}
-	case nIfnot: {
-		if (if_last == if_nothing)
-			rc_error("`if not' must follow `if'");
-		if (if_last == if_false)
-			walk(n->u[0].p, TRUE);
-		if_last = if_nothing;
+		WALK(true_cmd, parent);
 		break;
 	}
 	case nWhile: {
 		Jbwrap break_jb;
-		Edata  break_data;
+		Edata break_data;
 		Estack break_stack;
 		bool testtrue;
 		const bool oldcond = cond;
@@ -133,10 +125,10 @@ top:	sigchk();
 
 		cond = oldcond;
 		do {
-			Edata  iter_data;
-			Estack iter_stack;
-			iter_data.b = newblock();
-			except(eArena, iter_data, &iter_stack);
+			Edata arena_data;
+			Estack arena_stack;
+			arena_data.b = newblock();
+			except(eArena, arena_data, &arena_stack);
 			loop_body(n->u[1].p);
 			cond = TRUE;
 			testtrue = walk(n->u[0].p, TRUE);
@@ -148,9 +140,10 @@ top:	sigchk();
 		break;
 	}
 	case nForin: {
-		List *l, *var = glom(n->u[0].p);
+		const List *volatile l;
+		List *const var = glom(n->u[0].p);
 		Jbwrap break_jb;
-		Edata  break_data;
+		Edata break_data;
 		Estack break_stack;
 		if (sigsetjmp(break_jb.j, 1))
 			break;
@@ -158,11 +151,11 @@ top:	sigchk();
 		except(eBreak, break_data, &break_stack);
 
 		for (l = listcpy(glob(glom(n->u[1].p)), nalloc); l != NULL; l = l->n) {
-			Edata  iter_data;
-			Estack iter_stack;
+			Edata arena_data;
+			Estack arena_stack;
 			assign(var, word(l->w, NULL), FALSE);
-			iter_data.b = newblock();
-			except(eArena, iter_data, &iter_stack);
+			arena_data.b = newblock();
+			except(eArena, arena_data, &arena_stack);
 			loop_body(n->u[2].p);
 			unexcept(eArena);
 		}
@@ -185,7 +178,7 @@ top:	sigchk();
 		dopipe(n);
 		break;
 	case nNewfn: {
-		List *l = glom(n->u[0].p);
+		const List * l = glom(n->u[0].p);
 		if (l == NULL)
 			rc_error("null function name");
 		while (l != NULL) {
@@ -198,7 +191,7 @@ top:	sigchk();
 		break;
 	}
 	case nRmfn: {
-		List *l = glom(n->u[0].p);
+		const List *l = glom(n->u[0].p);
 		while (l != NULL) {
 			if (dashex)
 				fprint(2, "fn %S\n", l->w);
@@ -212,14 +205,14 @@ top:	sigchk();
 		redirq = NULL;
 		break; /* Null command */
 	case nMatch: {
-		List *a = glob(glom(n->u[0].p)), *b = glom(n->u[1].p);
+		const List *a = glob(glom(n->u[0].p)), *b = glom(n->u[1].p);
 		if (dashex)
 			fprint(2, (a != NULL && a->n != NULL) ? "~ (%L) %L\n" : "~ %L %L\n", a, " ", b, " ");
 		set(lmatch(a, b));
 		break;
 	}
 	case nSwitch: {
-		List *v = glom(n->u[0].p);
+		const List *v = glom(n->u[0].p);
 		while (1) {
 			do {
 				n = n->u[1].p;
@@ -235,7 +228,6 @@ top:	sigchk();
 		break;
 	}
 	case nPre: {
-		List *v;
 		if (n->u[0].p->type == nRedir || n->u[0].p->type == nDup) {
 			if (redirq == NULL && !dofork(parent)) /* subshell on first preredir */
 				break;
@@ -253,7 +245,7 @@ top:	sigchk();
 			} else {
 				Estack e;
 				Edata var;
-				v = glom(n->u[0].p->u[0].p);
+				const List *v = glom(n->u[0].p->u[0].p);
 				assign(v, glob(glom(n->u[0].p->u[1].p)), TRUE);
 				var.name = v->w;
 				except(eVarstack, var, &e);
@@ -288,16 +280,18 @@ top:	sigchk();
 	case nNmpipe:
 		rc_error("named pipes cannot be executed as commands");
 		/* NOTREACHED */
+		/* FALLTHRU */
 	default:
 		panic("unknown node in walk");
 		/* NOTREACHED */
+		/* FALLTHRU */
 	}
 	return istrue();
 }
 
 /* checks to see whether there are any pre-redirections left in the tree */
 
-static bool haspreredir(Node *n) {
+static bool haspreredir(const Node *n) {
 	while (n != NULL && n->type == nPre) {
 		if (n->u[0].p->type == nDup || n->u[0].p->type == nRedir)
 			return TRUE;
@@ -308,7 +302,7 @@ static bool haspreredir(Node *n) {
 
 /* checks to see whether a subtree is all pre-command directives, i.e., assignments and redirs only */
 
-static bool isallpre(Node *n) {
+static bool isallpre(const Node *n) {
 	while (n != NULL && n->type == nPre)
 		n = n->u[1].p;
 	return n == NULL || n->type == nRedir || n->type == nAssign || n->type == nDup;
@@ -321,23 +315,32 @@ static bool isallpre(Node *n) {
 
 static bool dofork(bool parent) {
 	int pid, sp;
+	struct termios t;
 
+	if (interactive)
+		tcgetattr(0, &t);
 	if (!parent || (pid = rc_fork()) == 0)
 		return TRUE;
 	redirq = NULL; /* clear out the pre-redirection queue in the parent */
 	rc_wait4(pid, &sp, TRUE);
+	if (interactive && WIFSIGNALED(sp))
+		tcsetattr(0, TCSANOW, &t);
 	setstatus(-1, sp);
 	sigchk();
 	return FALSE;
 }
 
-static void dopipe(Node *n) {
-	int i, j, sp, pid, fd_prev, fd_out, pids[512], stats[512], p[2];
+static void dopipe(const Node *n) {
+	int i, j, pid, fd_prev, fd_out, pids[512], stats[arraysize(pids)];
 	bool intr;
-	Node *r;
+	const Node *r;
+	struct termios t;
 
+	if (interactive)
+		tcgetattr(0, &t);
 	fd_prev = fd_out = 1;
 	for (r = n, i = 0; r != NULL && r->type == nPipe; r = r->u[2].p, i++) {
+		int p[2];
 		if (i > 500) /* the only hard-wired limit in rc? */
 			rc_error("pipe too long");
 		if (pipe(p) < 0) {
@@ -376,10 +379,13 @@ static void dopipe(Node *n) {
 
 	intr = FALSE;
 	for (j = 0; j < i; j++) {
+		int sp;
 		rc_wait4(pids[j], &sp, TRUE);
 		stats[j] = sp;
-		intr |= (sp == SIGINT);
+		intr |= WIFSIGNALED(sp);
 	}
+	if (interactive && intr)
+		tcsetattr(0, TCSANOW, &t);
 	setpipestatus(stats, i);
 	sigchk();
 }
@@ -391,12 +397,11 @@ static void dopipe(Node *n) {
  *             operators: ==, !=, <, >, <=, >=
  *   3. while (! setjmp(args)) {statements}
  *   4. setjmp(args);
-*/
-static void loop_body(Node* nd)
-{
-	Node *volatile n = nd;
+ */
+static void loop_body(const Node *nd) {
+	const Node *volatile n = nd;
 	Jbwrap cont_jb;
-	Edata  cont_data;
+	Edata cont_data;
 	Estack cont_stack;
 
 	if (sigsetjmp(cont_jb.j, 1) == 0) {
@@ -406,3 +411,4 @@ static void loop_body(Node* nd)
 		unexcept(eContinue);
 	}
 }
+

@@ -13,18 +13,17 @@ static Node *star, *nolist;
 Node *parsetree;	/* not using yylval because bison declares it as an auto */
 %}
 
-%token ANDAND BACKBACK BANG CASE COUNT DUP ELSE END FLAT FN FOR IF IN NOT
+%token ANDAND BACKBACK BANG CASE COUNT DUP ELSE END FLAT FN FOR IF IN
 %token OROR PIPE REDIR SREDIR SUB SUBSHELL SWITCH TWIDDLE WHILE WORD HUH
 
-%left NOT
 %left '^' '='
 %right ELSE TWIDDLE
 %left WHILE ')'
 %left ANDAND OROR '\n'
-%left BANG SUBSHELL
+%nonassoc BANG SUBSHELL
 %left PIPE
-%left PREDIR /* fictitious */
-%right '$' 
+%nonassoc PREDIR /* fictitious */
+%right '$'
 %left SUB
 /*
 */
@@ -35,7 +34,7 @@ Node *parsetree;	/* not using yylval because bison declares it as an auto */
 	struct Pipe pipe;
 	struct Dup dup;
 	struct Word word;
-	char *keyword;
+	const char *keyword;
 }
 
 %type <redir> REDIR SREDIR
@@ -107,7 +106,6 @@ cmd	: /* empty */	%prec WHILE		{ $$ = NULL; }
 	| simple
 	| brace epilog				{ $$ = mk(nBrace,$1,$2); }
 	| IF paren optnl iftail			{ $$ = mk(nIf,$2,$4); }
-	| IF NOT optnl cmd			{ $$ = mk(nIfnot,$4); }
 	| FOR '(' word IN words ')' optnl cmd	{ $$ = mk(nForin,$3,$5,$8); }
 	| FOR '(' word ')' optnl cmd		{ $$ = mk(nForin,$3,star,$6); }
 	| WHILE paren optnl cmd			{ $$ = mk(nWhile,$2,$4); }
@@ -150,6 +148,7 @@ comword	: '$' sword			{ $$ = mk(nVar,$2); }
 	| FLAT sword			{ $$ = mk(nFlat, $2); }
 	| '`' sword			{ $$ = mk(nBackq,nolist,$2); }
 	| '`' brace			{ $$ = mk(nBackq,nolist,$2); }
+	| '$' brace			{ $$ = mk(nBackq,nolist,$2); }
 	| BACKBACK word	brace		{ $$ = mk(nBackq,$2,$3); }
 	| BACKBACK word	sword		{ $$ = mk(nBackq,$2,$3); }
 	| '(' nlwords ')'		{ $$ = $2; }
@@ -160,7 +159,6 @@ keyword	: FOR		{ $$ = "for"; }
 	| IN		{ $$ = "in"; }
 	| WHILE		{ $$ = "while"; }
 	| IF		{ $$ = "if"; }
-	| NOT		{ $$ = "not"; }
 	| SWITCH	{ $$ = "switch"; }
 	| FN		{ $$ = "fn"; }
 	| ELSE		{ $$ = "else"; }
@@ -182,7 +180,7 @@ optnl	: /* empty */
 
 %%
 
-void initparse() {
+void initparse(void) {
 	star = treecpy(mk(nVar, mk(nWord,"*", NULL, FALSE)), ealloc);
 	nolist = treecpy(mk(nVar, mk(nWord,"ifs", NULL, FALSE)), ealloc);
 }

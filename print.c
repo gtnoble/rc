@@ -1,12 +1,14 @@
 /* print.c -- formatted printing routines (Paul Haahr, 12/91) */
 
 #include "rc.h"
-#include <setjmp.h>
 
 #define	PRINT_ALLOCSIZE	((size_t)64)
 #define	SPRINT_BUFSIZ	((size_t)1024)
 
 #define	MAXCONV 256
+
+static void fmtappend(Format *format, const char *s, size_t len);
+static int printfmt(Format *format, const char *fmt);
 
 /*
  * conversion functions
@@ -213,8 +215,8 @@ static void inittab(void) {
 		fmttab[i] = digitconv;
 }
 
-extern bool (*fmtinstall(int c, bool (*f)(Format *, int)))(Format *, int) {
-/*Conv fmtinstall(int c, Conv f) {*/
+extern Conv fmtinstall(int c, Conv f)
+{
 	Conv oldf;
 	if (fmttab[0] == NULL)
 		inittab();
@@ -230,7 +232,7 @@ extern bool (*fmtinstall(int c, bool (*f)(Format *, int)))(Format *, int) {
  * functions for inserting strings in the format buffer
  */
 
-extern void fmtappend(Format *format, const char *s, size_t len) {
+static void fmtappend(Format *format, const char *s, size_t len) {
 	while (format->buf + len > format->bufend) {
 		size_t split = format->bufend - format->buf;
 		memcpy(format->buf, s, split);
@@ -251,7 +253,7 @@ extern void fmtcat(Format *format, const char *s) {
  * printfmt -- the driver routine
  */
 
-extern int printfmt(Format *format, const char *fmt) {
+static int printfmt(Format *format, const char *fmt) {
 	unsigned const char *s = (unsigned const char *) fmt;
 
 	if (fmttab[0] == NULL)
@@ -295,8 +297,8 @@ extern int fmtprint(Format *format, const char *fmt,...) {
 }
 
 static void fprint_flush(Format *format, size_t ignore) {
-	size_t n = format->buf - format->bufbegin;
-	char *buf = format->bufbegin;
+	const size_t n = format->buf - format->bufbegin;
+	const char *buf = format->bufbegin;
 
 	format->flushed += n;
 	format->buf = format->bufbegin;
@@ -327,15 +329,15 @@ extern int fprint(int fd, const char *fmt,...) {
 static void memprint_grow(Format *format, size_t more) {
 	char *buf;
 	size_t len = format->bufend - format->bufbegin + 1;
-	size_t used = format->buf - format->bufbegin;
+	const size_t used = format->buf - format->bufbegin;
 
 	len = (len >= more)
 		? len * 2
 		: ((len + more) + PRINT_ALLOCSIZE) &~ (PRINT_ALLOCSIZE - 1);
 	if (format->u.n)
-		buf = erealloc(format->bufbegin, len);
+		buf = erenew_arr(char, format->bufbegin, len);
 	else {
-		buf = nalloc(len);
+		buf = nnew_arr(char, len);
 		memcpy(buf, format->bufbegin, used);
 	}
 	format->buf = buf + used;
@@ -362,7 +364,7 @@ extern char *mprint(const char *fmt,...) {
 	format.u.n = 1;
 	va_start(ap, fmt);
 	va_copy(format.args, ap);
-	result = memprint(&format, fmt, ealloc(PRINT_ALLOCSIZE), PRINT_ALLOCSIZE);
+	result = memprint(&format, fmt, enew_arr(char, PRINT_ALLOCSIZE), PRINT_ALLOCSIZE);
 	va_end(format.args);
 	return result;
 }
@@ -375,7 +377,7 @@ extern char *nprint(const char *fmt,...) {
 	format.u.n = 0;
 	va_start(ap, fmt);
 	va_copy(format.args, ap);
-	result = memprint(&format, fmt, nalloc(PRINT_ALLOCSIZE), PRINT_ALLOCSIZE);
+	result = memprint(&format, fmt, nnew_arr(char, PRINT_ALLOCSIZE), PRINT_ALLOCSIZE);
 	va_end(format.args);
 	return result;
 }

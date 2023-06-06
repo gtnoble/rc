@@ -21,9 +21,9 @@
 # endif
 #endif
 
-static List *dmatch(char *, char *, char *);
-static List *doglob(char *, char *);
-static List *lglob(List *, char *, char *, size_t);
+static List *dmatch(const char *, const char *, const char *);
+static List *doglob(char *, const char *);
+static List *lglob(List *, const char *, const char *, size_t);
 static List *sort(List *);
 
 /*
@@ -32,8 +32,8 @@ static List *sort(List *);
    patterns match nothing.
 */
 
-extern bool lmatch(List *s, List *p) {
-	List *q;
+extern bool lmatch(const List *s, const List *p) {
+	const List *q;
 	if (s == NULL) {
 		if (p == NULL) /* null matches null */
 			return TRUE;
@@ -85,12 +85,12 @@ extern List *glob(List *s) {
 
 /* Matches a pattern p against the contents of directory d */
 
-static List *dmatch(char *d, char *p, char *m) {
+static List *dmatch(const char *d, const char *p, const char *m) {
 	bool matched;
 	List *top, *r;
-	static DIR *dirp;
-	static struct dirent *dp;
-	static struct stat s;
+	DIR *dirp;
+	const struct dirent *dp;
+	struct stat s;
 	int i;
 
 	/*
@@ -149,7 +149,7 @@ static List *dmatch(char *d, char *p, char *m) {
    matched name. e.g., for matching ////tmp/////foo*
 */
 
-static List *lglob(List *s, char *p, char *m, size_t slashcount) {
+static List *lglob(List *s, const char *p, const char *m, size_t slashcount) {
 	List *q, *r, *top, foo;
 	static struct {
 		List l;
@@ -157,7 +157,7 @@ static List *lglob(List *s, char *p, char *m, size_t slashcount) {
 	} slash;
 	if (slashcount+1 > slash.size) {
 		slash.size = 2*(slashcount+1);
-		slash.l.w = erealloc(slash.l.w, slash.size);
+		slash.l.w = erenew_arr(char, slash.l.w, slash.size);
 	}
 	slash.l.w[slashcount] = '\0';
 	while (slashcount > 0)
@@ -187,20 +187,20 @@ static List *lglob(List *s, char *p, char *m, size_t slashcount) {
    pattern (cleaned of metacharacters) on failure, or the globbed string(s).
 */
 
-static List *doglob(char *w, char *m) {
+static List *doglob(char *w, const char *m) {
 	static char *dir = NULL, *pattern = NULL, *metadir = NULL, *metapattern = NULL;
 	static size_t dsize = 0;
 	char *d, *p, *md, *mp;
 	size_t psize;
-	char *s = w;
+	const char *s = w;
 	List firstdir;
 	List *matched;
 	if ((psize = strlen(w) + 1) > dsize || dir == NULL) {
 		efree(dir); efree(pattern); efree(metadir); efree(metapattern);
-		dir = ealloc(psize);
-		pattern = ealloc(psize);
-		metadir = ealloc(psize);
-		metapattern = ealloc(psize);
+		dir = enew_arr(char, psize);
+		pattern = enew_arr(char, psize);
+		metadir = enew_arr(char, psize);
+		metapattern = enew_arr(char, psize);
 		dsize = psize;
 	}
 	d = dir;

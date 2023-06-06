@@ -11,7 +11,7 @@
 
 #include "edit.h"
 
-bool editing = 1;
+const bool editing = 1;
 
 static const char *quote_chars = "\t\n !#$&'()*;<=>?@[\\]^`{|}~";
 
@@ -114,9 +114,17 @@ static char *entry(char *dname, char *name, char *subdirs,
 	full = dir_join(dname, name);
 	if (rc_access(full, FALSE, &st)) {
 		efree(full);
+		full = NULL;
 		return maybe_quote(dir_join(subdirs, name));
 	}
+
+	if(stat(full, &st) != 0) {
+		goto null;
+	}
+
 	efree(full);
+	full = NULL;
+
 	if (S_ISDIR(st.st_mode)) {
 		char *dir_ret = ealloc(strlen(name) + 5);
 		char *r;
@@ -128,6 +136,9 @@ static char *entry(char *dname, char *name, char *subdirs,
 		efree(dir_ret);
 		return maybe_quote(r);
 	}
+null:
+	efree(full);
+	full = NULL;
 	return NULL;
 }
 
@@ -308,7 +319,7 @@ void *edit_begin(int fd) {
 	return c;
 }
 
-static void (*oldint)(int), (*oldquit)(int);
+static Sigfunc *oldint, *oldquit;
 
 static void edit_catcher(int sig) {
 	sys_signal(SIGINT, oldint);

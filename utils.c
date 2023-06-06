@@ -3,13 +3,10 @@
 #include "rc.h"
 
 #include <errno.h>
-#include <setjmp.h>
-
-#include "jbwrap.h"
 
 /* print error with line number on noninteractive shells (i.e., scripts) */
 
-extern void pr_error(char *s, int offset) {
+extern void pr_error(const char *s, int offset) {
 	if (s != NULL) {
 		if (interactive)
 			fprint(2, RC "%s\n", s);
@@ -20,8 +17,8 @@ extern void pr_error(char *s, int offset) {
 
 /* our perror */
 
-extern void uerror(char *s) {
-	char *err;
+extern void uerror(const char *s) {
+	const char *err;
 
 	err = strerror(errno);
 	if (!err) err = "unknown error";
@@ -36,19 +33,21 @@ extern void uerror(char *s) {
 
 #define PANICMSG "rc panic: "
 
-extern void panic(char *s) {
-	write(2, PANICMSG, conststrlen(PANICMSG));
-	write(2, s, strlen(s));
-	write(2, "!\n", 2);
+extern void panic(const char *s) {
+	int ignore; /* All bets are off: cannot check write */
+	ignore = write(2, PANICMSG, conststrlen(PANICMSG));
+	ignore = write(2, s, strlen(s));
+	ignore = write(2, "!\n", 2);
+	(void) ignore;
 	exit(1);
 }
 
 /* ascii -> unsigned conversion routines. -1 indicates conversion error. */
 
-extern int n2u(char *s, unsigned int base) {
+extern int n2u(const char *s, unsigned int base) {
 	unsigned int i;
 	for (i = 0; *s != '\0'; s++) {
-		unsigned int j = (unsigned int) *s - '0';
+		const unsigned int j = (unsigned int) *s - '0';
 		if (j >= base) /* small hack with unsigned ints -- one compare for range test */
 			return -1;
 		i = i * base + j;
@@ -59,12 +58,12 @@ extern int n2u(char *s, unsigned int base) {
 /* The last word in portable ANSI: a strcmp wrapper for qsort */
 
 extern int starstrcmp(const void *s1, const void *s2) {
-	return strcmp(*(char * const *)s1, *(char * const *)s2);
+	return strcmp_fast(*(char * const *)s1, *(char * const *)s2);
 }
 
 /* tests to see if pathname begins with "/", "./", or "../" */
 
-extern bool isabsolute(char *path) {
+extern bool isabsolute(const char *path) {
 	return path[0] == '/' || (path[0] == '.' && (path[1] == '/' || (path[1] == '.' && path[2] == '/')));
 }
 
@@ -73,9 +72,29 @@ extern bool isabsolute(char *path) {
 
 extern int mvfd(int i, int j) {
 	if (i != j) {
-		int s = dup2(i, j);
+		const int s = dup2(i, j);
 		close(i);
 		return s;
 	}
 	return 0;
 }
+
+int find_str(const char *const s, const char *const arr[], int sz)
+{
+	const char *const *pi = &arr[0], *const *pj = &arr[sz];
+
+	while (pi < pj) {
+		const char *const *const pm = pi + (pj - pi) / 2;
+		const int c = strcmp_fast(*pm, s);
+		if (c > 0) {
+			pj = pm;
+		} else if (c < 0) {
+			pi = pm + 1;
+		} else {
+			return pm - arr;
+		}
+	}
+
+	return -1;
+}
+

@@ -13,17 +13,18 @@
    the rc source distribution.)
 */
 
-extern void doredirs() {
-	List *fname;
-	int fd, p[2];
-	Rq *r;
+extern void doredirs(void) {
+	const Rq *r;
 	for (r = redirq; r != NULL; r = r->n) {
 		switch(r->r->type) {
 		default:
 			panic("unexpected node in doredirs");
 			/* NOTREACHED */
-		case nRedir:
+			/* FALLTHRU */
+		case nRedir: {
+			const List *fname;
 			if (r->r->u[0].i == rHerestring) {
+				int p[2];
 				fname = flatten(glom(r->r->u[2].p)); /* fname is really a string */
 				if (pipe(p) < 0) {
 					uerror("pipe");
@@ -41,27 +42,32 @@ extern void doredirs() {
 						rc_error(NULL);
 				}
 			} else {
+				int fd;
 				fname = glob(glom(r->r->u[2].p));
 				if (fname == NULL)
 					rc_error("null filename in redirection");
-				if (fname->n != NULL)
+				else if (fname->n != NULL)
 					rc_error("multi-word filename in redirection");
-				switch (r->r->u[0].i) {
-				default:
-					panic("unexpected node in doredirs");
-					/* NOTREACHED */
-				case rCreate: case rAppend: case rFrom:
-					fd = rc_open(fname->w, r->r->u[0].i);
-					break;
+				else {
+					switch (r->r->u[0].i) {
+					default:
+						panic("unexpected node in doredirs");
+						/* NOTREACHED */
+						/* FALLTHRU */
+					case rCreate: case rAppend: case rFrom:
+						fd = rc_open(fname->w, r->r->u[0].i);
+						break;
+					}
+					if (fd < 0) {
+						uerror(fname->w);
+						rc_error(NULL);
+					}
+					if (mvfd(fd, r->r->u[1].i) < 0)
+						rc_error(NULL);
 				}
-				if (fd < 0) {
-					uerror(fname->w);
-					rc_error(NULL);
-				}
-				if (mvfd(fd, r->r->u[1].i) < 0)
-					rc_error(NULL);
 			}
 			break;
+		}
 		case nDup:
 			if (r->r->u[2].i == -1)
 				close(r->r->u[1].i);
